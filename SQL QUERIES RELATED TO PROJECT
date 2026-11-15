@@ -1,0 +1,149 @@
+PROJECT 1: RETAIL SALES & PROFITABILITY ANALYTICS DASHBOARD
+-- AUTHOR: Ankit Nagwanshi
+-- DATABASE: PostgreSQL
+-- DESCRIPTION: This script handles table creation, bulk data ingestion from 
+--              'MUNNA 20000.csv', explicit data import status check, data 
+--              cleaning checks, and advanced analytical dashboard queries.
+-- ============================================================================
+
+-- Step 1: Drop the table if it already exists to ensure a clean setup
+DROP TABLE IF EXISTS retail_sales_transactions;
+
+-- Step 2: Create the main transactional table structure with proper data types
+CREATE TABLE retail_sales_transactions (
+    order_id VARCHAR(30) PRIMARY KEY,
+    order_date DATE NOT NULL,
+    ship_date DATE NOT NULL,
+    customer_id VARCHAR(30) NOT NULL,
+    customer_name VARCHAR(100) NOT NULL,
+    customer_segment VARCHAR(50) NOT NULL,
+    region VARCHAR(50) NOT NULL,
+    state VARCHAR(50) NOT NULL,
+    city VARCHAR(50) NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    sub_category VARCHAR(50) NOT NULL,
+    product_id VARCHAR(30) NOT NULL,
+    product_name VARCHAR(150) NOT NULL,
+    quantity INT NOT NULL,
+    unit_price NUMERIC(12, 2) NOT NULL,
+    unit_cost NUMERIC(12, 2) NOT NULL,
+    discount_pct NUMERIC(5, 2) NOT NULL,
+    sales NUMERIC(14, 2) NOT NULL,
+    cost NUMERIC(14, 2) NOT NULL,
+    profit NUMERIC(14, 2) NOT NULL,
+    payment_mode VARCHAR(50) NOT NULL,
+    sales_channel VARCHAR(50) NOT NULL,
+    monthly_sales_target NUMERIC(15, 2) NOT NULL
+);
+
+-- Step 3: Check row count before import (Should be 0)
+SELECT COUNT(*) AS initial_table_row_count FROM retail_sales_transactions;
+
+-- Step 4: Bulk import 20,000+ transactional records directly from the CSV file
+-- Note: Make sure your PostgreSQL user has read access to this directory path
+COPY retail_sales_transactions(
+    order_id, order_date, ship_date, customer_id, customer_name, 
+    customer_segment, region, state, city, category, sub_category, 
+    product_id, product_name, quantity, unit_price, unit_cost, 
+    discount_pct, sales, cost, profit, payment_mode, sales_channel, 
+    monthly_sales_target
+)
+FROM 'C:\import csv\MUNNA 20000.csv'
+WITH (FORMAT csv, HEADER true, DELIMITER ',');
+
+-- ============================================================================
+-- STEP 5: 🟢 EXPLICIT DATA IMPORT STATUS CHECK (YAHAN APKO DIKHEGA DATA ADD HUA YA NAHI)
+-- ============================================================================
+SELECT 
+    COUNT(*) AS total_rows_in_database,
+    CASE 
+        WHEN COUNT(*) = 20000 THEN 'SUCCESS: All 20,000 rows imported successfully!'
+        WHEN COUNT(*) > 0 THEN 'PARTIAL: Data loaded, but row count does not match 20,000!'
+        ELSE 'FAILED: No data found in the table!'
+    END AS import_status_report
+FROM retail_sales_transactions;
+
+-- Quick peek at the first 5 rows to visually confirm correct data mapping
+SELECT order_id, order_date, customer_name, category, sales, profit 
+FROM retail_sales_transactions 
+LIMIT 5;
+
+-- Step 6: Data cleaning and anomaly checks (Checking for missing data or gross profit mismatches)
+SELECT COUNT(*) AS missing_critical_values 
+FROM retail_sales_transactions 
+WHERE sales IS NULL OR profit IS NULL OR quantity IS NULL;
+
+-- Identifying any rows where profit significantly deviates from standard sales minus cost
+SELECT 
+    order_id, 
+    sales, 
+    cost, 
+    profit,
+    (sales - cost) AS calculated_gross_profit
+FROM retail_sales_transactions
+WHERE ABS(profit - (sales - cost)) > 1.00;
+
+-- Step 7: Advanced analytical queries to power our Power BI dashboard and Excel reports
+
+-- Query 1: Overall business performance (Total Revenue, Cost, Profit, and Gross Margin %)
+SELECT 
+    SUM(sales) AS total_revenue,
+    SUM(cost) AS total_cost,
+    SUM(profit) AS total_profit,
+    ROUND((SUM(profit) / NULLIF(SUM(sales), 0)) * 100, 2) AS overall_gross_margin_pct
+FROM retail_sales_transactions;
+
+-- Query 2: Regional revenue and profit performance breakdown
+SELECT 
+    region,
+    COUNT(DISTINCT order_id) AS total_orders,
+    SUM(sales) AS regional_revenue,
+    SUM(profit) AS regional_profit,
+    ROUND((SUM(profit) / NULLIF(SUM(sales), 0)) * 100, 2) AS regional_margin_pct
+FROM retail_sales_transactions
+GROUP BY region
+ORDER BY regional_revenue DESC;
+
+-- Query 3: Top 10 best-performing products by total sales revenue
+SELECT 
+    product_id,
+    product_name,
+    category,
+    SUM(quantity) AS total_units_sold,
+    SUM(sales) AS total_sales,
+    SUM(profit) AS total_profit
+FROM retail_sales_transactions
+GROUP BY product_id, product_name, category
+ORDER BY total_sales DESC
+LIMIT 10;
+
+-- Query 4: Isolating low-margin product sub-categories to optimize pricing & inventory
+SELECT 
+    sub_category,
+    COUNT(order_id) AS transaction_count,
+    SUM(sales) AS total_sales,
+    SUM(profit) AS total_profit,
+    ROUND((SUM(profit) / NULLIF(SUM(sales), 0)) * 100, 2) AS margin_pct
+FROM retail_sales_transactions
+GROUP BY sub_category
+HAVING (SUM(profit) / NULLIF(SUM(sales), 0)) * 100 < 15
+ORDER BY margin_pct ASC;
+
+-- Query 5: Monthly sales trend analysis with Month-over-Month (MoM) variance using window functions
+WITH monthly_summary AS (
+    SELECT 
+        TO_CHAR(order_date, 'YYYY-MM') AS sales_month,
+        SUM(sales) AS monthly_sales,
+        SUM(profit) AS monthly_profit,
+        AVG(monthly_sales_target) AS avg_monthly_target
+    FROM retail_sales_transactions
+    GROUP BY TO_CHAR(order_date, 'YYYY-MM')
+)
+SELECT 
+    sales_month,
+    monthly_sales,
+    monthly_profit,
+    avg_monthly_target,
+    (monthly_sales - LAG(monthly_sales, 1) OVER (ORDER BY sales_month)) AS mom_sales_variance
+FROM monthly_summary
+ORDER BY sales_month;
